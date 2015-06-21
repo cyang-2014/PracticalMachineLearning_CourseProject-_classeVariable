@@ -1,0 +1,207 @@
+---
+title: "Practical machine learning course project"
+author: "C.  YANG"
+date: "June 21, 2015"
+output: html_document
+---
+## __Overview__
+
+### Background
+
+"Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). "
+
+### Data
+
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment. 
+
+- Note: I downloaded these two csv files into local directories, then read into R.
+
+### What we should submit
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases. 
+
+1. Your submission should consist of a link to a Github repo with your R markdown and compiled HTML file describing your analysis. Please constrain the text of the writeup to < 2000 words and the number of figures to be less than 5. It will make it easier for the graders if you submit a repo with a gh-pages branch so the HTML page can be viewed online (and you always want to make it easy on graders :-).
+
+2. You should also apply your machine learning algorithm to the 20 test cases available in the test data above. Please submit your predictions in appropriate format to the programming assignment for automated grading. See the programming assignment for additional details. 
+
+### Reproducibility
+
+Due to security concerns with the exchange of R code, your code will not be run during the evaluation by your classmates. Please be sure that if they download the repo, they will be able to view the compiled HTML version of your analysis. 
+
+## __Analysis__
+
+### *Loading the packages*
+
+```{r, echo = TRUE}
+getwd()
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(foreach)
+library(rattle)
+library(randomForest)
+
+# Finally, load the same seed with the following line of code:
+set.seed(12345)
+```
+
+### *Load the data and assign training & test set*
+
+```{r, echo=TRUE}
+training <- read.csv("../../data/predMachLearn/pml-training.csv")
+testing <- read.csv("../../data/predMachLearn/pml-testing.csv")
+```
+
+### *Cross-validation by splitting training set only*
+
+Splitting Training data set into two data sets, 60% for myTraining, 40% for myTesting:
+
+```{r, echo=TRUE}
+inTrain <- createDataPartition(y=training$classe, p=0.6, list=FALSE)
+Training.sub <- training[inTrain, ]
+Testing.sub <- training[-inTrain, ]
+dim(Training.sub); dim(Testing.sub)
+```
+
+### *Clean the data*
+
+#### Training.sub data.frame
+
+- Cleaning NearZeroVariance Variables Run this code to view possible NZV Variables:
+nearZeroVar diagnoses predictors that have one unique value (i.e. are zero variance predictors) 
+or predictors that are have both of the following characteristics: 
+they have very few unique values relative to the number of samples 
+and the ratio of the frequency of the most common value to the frequency of the second most common 
+value is large. checkConditionalX looks at the distribution of the columns of x conditioned on the 
+levels of y and identifies columns of x that are sparse within groups of y.
+
+```{r, echo=TRUE}
+Training.sub.NearZeroVar <- nearZeroVar(Training.sub, saveMetrics = TRUE)
+## remove nzv == TRUE variables.
+nzv.var <- colnames(Training.sub) %in% rownames(Training.sub.NearZeroVar[Training.sub.NearZeroVar$nzv == TRUE, ])
+Training.sub <- Training.sub[!nzv.var]
+dim(Training.sub)
+```
+
+- Removing X variable:
+
+```{r, echo=TRUE}
+Training.sub <- Training.sub[, -1]
+```
+
+- Cleaning NAs:
+
+```{r, echo=TRUE}
+trainingV4.3 <- Training.sub #creating another subset to iterate in loop
+# foreach(i = 1:ncol(Training.sub)) %do% { #for every column in the training dataset
+#     if( sum( is.na( Training.sub[, i] ) ) /nrow(Training.sub) >= .5 ) { #if number of NAs > 50% of total obs
+#         foreach(j = 1:ncol(trainingV4.3)) %do% {
+#             if( length( grep(names(Training.sub[i]), names(trainingV4.3)[j]) ) ==1)  { #if the columns are the same:
+#                 trainingV4.3 <- trainingV4.3[ , -j] #Remove that column
+#             }   
+#         } 
+#     }
+# }
+
+trainingV4.3 <- readRDS("../../data/predMachLearn/trainingV4_3_afterRemoveNA.rds")
+#To check the new N?? of observations
+dim(trainingV4.3)  ## 58
+
+Training.sub <- trainingV4.3
+rm(trainingV4.3)
+```
+
+#### Testing.sub data.frame
+
+```{r, echo=TRUE}
+Testing.sub <- Testing.sub[colnames(Training.sub)]
+dim(Testing.sub)
+## remove "classe" variable before subsetting original testing data set
+testing <- testing[colnames(Training.sub[, -58])] 
+dim(testing)
+```
+
+#### Coersion: In order to ensure proper functioning of Decision Trees, 
+and especially RandomForest Algorithm with the Test data set (data set provided), 
+we need to coerce the data into the same type.
+
+```{r, echo=TRUE}
+# foreach (i = 1:length(testing) ) %do% {
+#     foreach(j = 1:length(Training.sub)) %do% {
+#         if( length( grep(names(Training.sub[i]), names(testing)[j]) ) ==1)  {
+#             class(testing[j]) <- class(Training.sub[i])
+#         }      
+#     }      
+# }
+testing <- readRDS("../../data/predMachLearn/testing_afterCoerce.rds")
+
+testing <- rbind(Training.sub[2, -58] , testing) 
+testing <- testing[-1,]
+```
+
+### *Models built*
+
+This is the "classe" variable in the training set. You may use any of the other variables to predict with
+
+#### **Decision Tree**
+```{r, echo=TRUE}
+modFit.DecisionTree <- rpart(classe ~ ., data = Training.sub, method="class")
+    # Plot the Decision Tree
+    fancyRpartPlot(modFit.DecisionTree)
+    rpart.plot(modFit.DecisionTree)
+    # Predicting:
+    predictions.DecisionTree <- predict(modFit.DecisionTree, Testing.sub, type = "class")
+    # Check the accuracy:
+    confusionMatrix(predictions.DecisionTree, Testing.sub$classe)
+```
+
+#### **Random Forest**
+```{r, echo=TRUE}
+modFit.RandomForest <- randomForest(classe ~. , data = Training.sub)
+# Predicting 
+predictions.RandomForest <- predict(modFit.RandomForest, Testing.sub, type = "class")
+# Check the accuracy:
+confusionMatrix(predictions.RandomForest, Testing.sub$classe)
+```
+
+#### **Bagging**
+```{r, echo=TRUE}
+library(ipred)
+modFit.Bagging <- bagging(classe ~., data=Training.sub, nbagg=25)
+predictions.Bagging <- predict(modFit.Bagging, Testing.sub)
+confusionMatrix(predictions.Bagging, Testing.sub$classe)
+```
+
+As both the accuracy of **DecisionTree** and **Bagging** are less than RandomForest, 
+the **Random Forest** would be a better choice.
+
+## __For submission part__
+
+Use Random Forests to predict the testing data.frame.
+
+```{r, echo=TRUE}
+predictions.RandomForest.test <- predict(modFit.RandomForest, testing, type = "class")
+answers <- as.character(predictions.RandomForest.test)
+```
+
+then you can load this function by copying and pasting it into R:
+```{r, echo = TRUE}
+    pml_write_files = function(x){
+        n = length(x)
+        for(i in 1:n){
+            filename = paste0("problem_id_",i,".txt")
+            write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+        }
+    }
+
+pml_write_files(predictions.RandomForest.test)
+```
